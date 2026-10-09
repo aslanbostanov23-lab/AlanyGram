@@ -50,9 +50,8 @@ jobs:
             echo "Скачивание IPA по указанной ссылке..."
             curl -fLo Telegram.ipa "${{ github.event.inputs.telegram_ipa_url }}"
           else
-            echo "Скачивание проверенного расшифрованного Telegram.ipa..."
-            gh release download 9.0.24102 -R MarshalX/decrypted-telegram-ios -p "*.ipa" -O Telegram.ipa || \
-            curl -fLo Telegram.ipa "https://github.com/purp0s3/Tweaked-iOS-Apps/releases/download/Telegram/Telegram.ipa"
+            echo "Скачивание современного чистого Telegram 10.x без DRM..."
+            gh release download build-26837 -R teamgram/teamgram-ios -p "Telegram.ipa" -O Telegram.ipa
           fi
 
       - name: Inject Tweak into IPA
