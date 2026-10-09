@@ -85,6 +85,11 @@ jobs:
           # Удаляем PlugIns и Watch, которые вызывают черный экран при бесплатном Apple ID (Sideloading fix)
           rm -rf "$APP_PATH/PlugIns" "$APP_PATH/Watch"
 
+          # Устанавливаем независимый Bundle ID и имя AlanyGram, чтобы работать параллельно с официальным Telegram
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ru.aslan.alanygram" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName AlanyGram" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName AlanyGram" "$APP_PATH/Info.plist" || true
+
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
           echo "Executable name: $BINARY_NAME"

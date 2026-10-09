@@ -29,17 +29,23 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 }
 
 // -----------------------------------------------------------------------------
-// 1. Sideload Bundle Spoofer (Предотвращает черный экран при кастомном Bundle ID)
+// 1. App Group Sandbox Fallback (Устраняет черный экран при установке второй телеги)
 // -----------------------------------------------------------------------------
 
-@interface AGBundleHook : NSObject
+@interface NSFileManager (AGAppGroupFix)
 @end
 
-@implementation AGBundleHook
+@implementation NSFileManager (AGAppGroupFix)
 
-- (NSString *)ag_bundleIdentifier {
-    // Возвращаем оригинальный Bundle ID Telegram, чтобы внутренние базы данных и Swift не зависали
-    return @"ph.telegra.Telegraph";
+- (NSURL *)ag_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
+    NSURL *url = [self ag_containerURLForSecurityApplicationGroupIdentifier:groupIdentifier];
+    if (!url) {
+        // Если App Group недоступен (бесплатный Apple ID или стоит официальная телега),
+        // перенаправляем базу данных в личную папку Documents приложения!
+        url = [[self URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
+        NSLog(@"[AlanyGram] Redirected App Group '%@' to private sandbox: %@", groupIdentifier, url);
+    }
+    return url;
 }
 
 @end
@@ -139,7 +145,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 4. Плавающая кнопка настроек AlanyGram (Безопасно, без вмешательства в UIWindow)
+// 4. Плавающая кнопка настроек AlanyGram
 // -----------------------------------------------------------------------------
 
 @interface AGFloatingButtonManager : NSObject
@@ -239,10 +245,13 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 
 __attribute__((constructor))
 static void AlanyGramInitialize(void) {
-    NSLog(@"[AlanyGram] Initializing safe, crash-free mod...");
+    NSLog(@"[AlanyGram] Initializing AlanyGram with App Group Fallback...");
     
-    // 1. Спуфим Bundle Identifier, чтобы убрать зависание на черном экране
-    AGSwizzleInstanceMethod([NSBundle class], @selector(bundleIdentifier), [AGBundleHook class], @selector(ag_bundleIdentifier));
+    // 1. Фикс черного экрана: перенаправление App Group в личный Documents, если группы недоступны
+    AGSwizzleInstanceMethod([NSFileManager class], 
+                            @selector(containerURLForSecurityApplicationGroupIdentifier:), 
+                            [NSFileManager class], 
+                            @selector(ag_containerURLForSecurityApplicationGroupIdentifier:));
     
     // 2. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
