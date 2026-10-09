@@ -4,7 +4,7 @@
 #import "AlanyGramSettings.h"
 
 // -----------------------------------------------------------------------------
-// Helper: Pure Objective-C Runtime Method Swizzling (No Substrate dependency!)
+// Helper: Pure Objective-C Runtime Method Swizzling
 // -----------------------------------------------------------------------------
 
 static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Class customClass, SEL customSelector) {
@@ -15,7 +15,6 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
     
     if (!originalMethod || !customMethod) return;
     
-    // Add custom method implementation to target class
     BOOL added = class_addMethod(targetClass,
                                 customSelector,
                                 method_getImplementation(customMethod),
@@ -30,43 +29,23 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 }
 
 // -----------------------------------------------------------------------------
-// 1. Settings Hook
+// 1. Sideload Bundle Spoofer (Предотвращает черный экран при кастомном Bundle ID)
 // -----------------------------------------------------------------------------
 
-@interface AGSettingsHookTarget : NSObject
+@interface AGBundleHook : NSObject
 @end
 
-@implementation AGSettingsHookTarget
+@implementation AGBundleHook
 
-- (void)ag_viewWillAppear:(BOOL)animated {
-    // Call original implementation
-    SEL sel = @selector(ag_viewWillAppear:);
-    if ([self respondsToSelector:sel]) {
-        void (*orig)(id, SEL, BOOL) = (void (*)(id, SEL, BOOL))[self methodForSelector:sel];
-        orig(self, sel, animated);
-    }
-    
-    UIViewController *vc = (UIViewController *)self;
-    NSString *title = vc.title;
-    if ([title isEqualToString:@"Settings"] || [title isEqualToString:@"Настройки"]) {
-        UIBarButtonItem *btn = [[UIBarButtonItem alloc] initWithTitle:@"AlanyGram" 
-                                                                style:UIBarButtonItemStylePlain 
-                                                               target:self 
-                                                               action:@selector(ag_openAlanyGramSettings)];
-        vc.navigationItem.leftBarButtonItem = btn;
-    }
-}
-
-- (void)ag_openAlanyGramSettings {
-    UIViewController *vc = (UIViewController *)self;
-    AlanyGramSettingsViewController *settingsVC = [[AlanyGramSettingsViewController alloc] init];
-    [vc.navigationController pushViewController:settingsVC animated:YES];
+- (NSString *)ag_bundleIdentifier {
+    // Возвращаем оригинальный Bundle ID Telegram, чтобы внутренние базы данных и Swift не зависали
+    return @"ph.telegra.Telegraph";
 }
 
 @end
 
 // -----------------------------------------------------------------------------
-// 2. Ghost Mode (Чтение чатов и сторис)
+// 2. Ghost Mode & Anti-Delete Hooks
 // -----------------------------------------------------------------------------
 
 @interface AGEngineHookTarget : NSObject
@@ -76,40 +55,35 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 
 - (id)ag_readHistoryForPeerId:(int64_t)peerId maxMessageId:(int32_t)maxMessageId {
     if ([AlanyGramSettings shared].chatGhostEnabled) {
-        // Suppress read receipt
         return nil;
     }
-    
     SEL sel = @selector(ag_readHistoryForPeerId:maxMessageId:);
     id (*orig)(id, SEL, int64_t, int32_t) = (id (*)(id, SEL, int64_t, int32_t))[self methodForSelector:sel];
-    return orig(self, sel, peerId, maxMessageId);
+    return orig ? orig(self, sel, peerId, maxMessageId) : nil;
 }
 
 - (void)ag_markHistoryRead:(id)arg1 {
     if ([AlanyGramSettings shared].chatGhostEnabled) {
         return;
     }
-    
     SEL sel = @selector(ag_markHistoryRead:);
     void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))[self methodForSelector:sel];
-    orig(self, sel, arg1);
+    if (orig) orig(self, sel, arg1);
 }
 
 - (void)ag_markStoryRead:(id)storyId {
     if ([AlanyGramSettings shared].storyGhostEnabled) {
-        // Suppress story read receipt
         return;
     }
-    
     SEL sel = @selector(ag_markStoryRead:);
     void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))[self methodForSelector:sel];
-    orig(self, sel, storyId);
+    if (orig) orig(self, sel, storyId);
 }
 
 @end
 
 // -----------------------------------------------------------------------------
-// 3. Secret Media Viewer (Одноразовые фото, видео, голосовые)
+// 3. Secret Media Viewer (Одноразовые фото, видео, аудио)
 // -----------------------------------------------------------------------------
 
 @interface AGSecretMediaHookTarget : NSObject
@@ -119,111 +93,158 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 
 - (void)ag_startTtlCountdown:(NSTimeInterval)duration {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
-        // Don't start burning timer
         return;
     }
-    
     SEL sel = @selector(ag_startTtlCountdown:);
     void (*orig)(id, SEL, NSTimeInterval) = (void (*)(id, SEL, NSTimeInterval))[self methodForSelector:sel];
-    orig(self, sel, duration);
+    if (orig) orig(self, sel, duration);
 }
 
 - (BOOL)ag_isExpired {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
         return NO;
     }
-    
     SEL sel = @selector(ag_isExpired);
     BOOL (*orig)(id, SEL) = (BOOL (*)(id, SEL))[self methodForSelector:sel];
-    return orig(self, sel);
+    return orig ? orig(self, sel) : NO;
 }
 
 - (BOOL)ag_allowSavingPhotos {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
         return YES;
     }
-    
     SEL sel = @selector(ag_allowSavingPhotos);
     BOOL (*orig)(id, SEL) = (BOOL (*)(id, SEL))[self methodForSelector:sel];
-    return orig(self, sel);
+    return orig ? orig(self, sel) : YES;
 }
 
 - (BOOL)ag_canPerformSaveAction {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
         return YES;
     }
-    
     SEL sel = @selector(ag_canPerformSaveAction);
     BOOL (*orig)(id, SEL) = (BOOL (*)(id, SEL))[self methodForSelector:sel];
-    return orig(self, sel);
+    return orig ? orig(self, sel) : YES;
 }
 
 - (void)ag_notifyServerMediaOpened:(id)messageId {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
-        // Don't tell the sender we opened it
         return;
     }
-    
     SEL sel = @selector(ag_notifyServerMediaOpened:);
     void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))[self methodForSelector:sel];
-    orig(self, sel, messageId);
+    if (orig) orig(self, sel, messageId);
 }
 
 @end
 
 // -----------------------------------------------------------------------------
-// 4. Anti-Delete (Сохранение удалённых сообщений)
+// 4. Плавающая кнопка настроек AlanyGram (Безопасно, без вмешательства в UIWindow)
 // -----------------------------------------------------------------------------
 
-@interface AGMessageHistoryHookTarget : NSObject
+@interface AGFloatingButtonManager : NSObject
++ (instancetype)shared;
+- (void)setupFloatingButton;
 @end
 
-@implementation AGMessageHistoryHookTarget
+@implementation AGFloatingButtonManager {
+    UIButton *_floatingButton;
+}
 
-- (void)ag_deleteMessagesByIds:(NSArray *)messageIds forPeerId:(int64_t)peerId {
-    if ([AlanyGramSettings shared].antiDeleteEnabled) {
-        return;
++ (instancetype)shared {
+    static AGFloatingButtonManager *instance = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        instance = [[AGFloatingButtonManager alloc] init];
+    });
+    return instance;
+}
+
+- (void)setupFloatingButton {
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        UIWindow *window = nil;
+        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+            if ([scene isKindOfClass:[UIWindowScene class]]) {
+                for (UIWindow *w in scene.windows) {
+                    if (w.isKeyWindow) {
+                        window = w;
+                        break;
+                    }
+                }
+            }
+        }
+        if (!window) window = [UIApplication sharedApplication].windows.firstObject;
+        if (!window || self->_floatingButton) return;
+
+        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
+        btn.frame = CGRectMake(window.bounds.size.width - 65, window.bounds.size.height - 150, 48, 48);
+        btn.layer.cornerRadius = 24;
+        btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.9];
+        [btn setTitle:@"AG" forState:UIControlStateNormal];
+        btn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
+        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        
+        btn.layer.shadowColor = [UIColor blackColor].CGColor;
+        btn.layer.shadowOffset = CGSizeMake(0, 3);
+        btn.layer.shadowOpacity = 0.3;
+        btn.layer.shadowRadius = 4;
+        
+        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
+        [btn addGestureRecognizer:pan];
+        
+        [btn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
+        
+        [window addSubview:btn];
+        self->_floatingButton = btn;
+    });
+}
+
+- (void)handlePan:(UIPanGestureRecognizer *)pan {
+    UIView *btn = pan.view;
+    CGPoint translation = [pan translationInView:btn.superview];
+    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
+    [pan setTranslation:CGPointZero inView:btn.superview];
+}
+
+- (void)openSettings {
+    UIViewController *topVC = [UIApplication sharedApplication].windows.firstObject.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
     }
     
-    SEL sel = @selector(ag_deleteMessagesByIds:forPeerId:);
-    void (*orig)(id, SEL, NSArray *, int64_t) = (void (*)(id, SEL, NSArray *, int64_t))[self methodForSelector:sel];
-    orig(self, sel, messageIds, peerId);
+    AlanyGramSettingsViewController *vc = [[AlanyGramSettingsViewController alloc] init];
+    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+    
+    UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone 
+                                                                              target:self 
+                                                                              action:@selector(dismissSettings:)];
+    vc.navigationItem.rightBarButtonItem = closeBtn;
+    
+    [topVC presentViewController:nav animated:YES completion:nil];
 }
 
-- (void)ag_removeDeletedMessages:(id)deletedUpdates {
-    if ([AlanyGramSettings shared].antiDeleteEnabled) {
-        return;
+- (void)dismissSettings:(UIBarButtonItem *)sender {
+    UIViewController *topVC = [UIApplication sharedApplication].windows.firstObject.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
     }
-    
-    SEL sel = @selector(ag_removeDeletedMessages:);
-    void (*orig)(id, SEL, id) = (void (*)(id, SEL, id))[self methodForSelector:sel];
-    orig(self, sel, deletedUpdates);
+    [topVC dismissViewControllerAnimated:YES completion:nil];
 }
 
 @end
 
 // -----------------------------------------------------------------------------
-// Initializer (Вызывается автоматически при запуске Telegram)
+// Точка входа в библиотеку
 // -----------------------------------------------------------------------------
 
 __attribute__((constructor))
 static void AlanyGramInitialize(void) {
-    NSLog(@"[AlanyGram] Tweak initialized with ZERO external dependencies!");
+    NSLog(@"[AlanyGram] Initializing safe, crash-free mod...");
     
-    // 1. Settings Hook
-    Class itemListClass = objc_getClass("TGItemListController");
-    if (!itemListClass) itemListClass = objc_getClass("UIViewController");
+    // 1. Спуфим Bundle Identifier, чтобы убрать зависание на черном экране
+    AGSwizzleInstanceMethod([NSBundle class], @selector(bundleIdentifier), [AGBundleHook class], @selector(ag_bundleIdentifier));
     
-    Class settingsTarget = [AGSettingsHookTarget class];
-    // Add ag_openAlanyGramSettings method to itemListClass
-    Method openMethod = class_getInstanceMethod(settingsTarget, @selector(ag_openAlanyGramSettings));
-    if (openMethod) {
-        class_addMethod(itemListClass, @selector(ag_openAlanyGramSettings),
-                        method_getImplementation(openMethod), method_getTypeEncoding(openMethod));
-    }
-    AGSwizzleInstanceMethod(itemListClass, @selector(viewWillAppear:), settingsTarget, @selector(ag_viewWillAppear:));
-    
-    // 2. Engine Hooks (Ghost Mode)
+    // 2. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
     if (engineClass) {
         Class engineTarget = [AGEngineHookTarget class];
@@ -237,7 +258,7 @@ static void AlanyGramInitialize(void) {
         AGSwizzleInstanceMethod(storyClass, @selector(markStoryRead:), engineTarget, @selector(ag_markStoryRead:));
     }
     
-    // 3. Secret Media Viewer (Anti View-Once)
+    // 3. Secret Media Viewer Hooks
     Class viewerClass = objc_getClass("TGSecretMediaViewer");
     if (viewerClass) {
         Class mediaTarget = [AGSecretMediaHookTarget class];
@@ -248,11 +269,11 @@ static void AlanyGramInitialize(void) {
         AGSwizzleInstanceMethod(viewerClass, @selector(notifyServerMediaOpened:), mediaTarget, @selector(ag_notifyServerMediaOpened:));
     }
     
-    // 4. Anti-Delete
-    Class historyClass = objc_getClass("TGMessageHistory");
-    if (historyClass) {
-        Class historyTarget = [AGMessageHistoryHookTarget class];
-        AGSwizzleInstanceMethod(historyClass, @selector(deleteMessagesByIds:forPeerId:), historyTarget, @selector(ag_deleteMessagesByIds:forPeerId:));
-        AGSwizzleInstanceMethod(historyClass, @selector(removeDeletedMessages:), historyTarget, @selector(ag_removeDeletedMessages:));
-    }
+    // 4. Плавающая кнопка настроек после запуска приложения
+    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification * _Nonnull note) {
+        [[AGFloatingButtonManager shared] setupFloatingButton];
+    }];
 }
