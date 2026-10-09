@@ -29,7 +29,65 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 }
 
 // -----------------------------------------------------------------------------
-// 1. App Group Sandbox Fallback (Устраняет черный экран при установке второй телеги)
+// 1. CloudKit Mock (Предотвращает SIGTRAP / EXC_BREAKPOINT на бесплатном Apple ID)
+// -----------------------------------------------------------------------------
+
+@interface AGMockCKDatabase : NSObject
+@end
+
+@implementation AGMockCKDatabase
+
+- (void)fetchRecordWithID:(id)recordID completionHandler:(void (^)(id, NSError *))handler {
+    if (handler) {
+        NSError *error = [NSError errorWithDomain:@"CKErrorDomain" code:1 userInfo:@{NSLocalizedDescriptionKey: @"CloudKit disabled on free Apple ID"}];
+        handler(nil, error);
+    }
+}
+
+- (id)forwardingTargetForSelector:(SEL)aSelector {
+    return nil;
+}
+
+@end
+
+@interface AGMockCKContainer : NSObject
+@end
+
+@implementation AGMockCKContainer
+
++ (id)ag_defaultContainer {
+    static AGMockCKContainer *dummy = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dummy = [[AGMockCKContainer alloc] init];
+    });
+    return dummy;
+}
+
++ (id)ag_containerWithIdentifier:(id)identifier {
+    return [self ag_defaultContainer];
+}
+
+- (id)databaseWithDatabaseScope:(NSInteger)scope {
+    return [[AGMockCKDatabase alloc] init];
+}
+
+- (id)privateCloudDatabase {
+    return [[AGMockCKDatabase alloc] init];
+}
+
+- (id)publicCloudDatabase {
+    return [[AGMockCKDatabase alloc] init];
+}
+
+- (id)sharedCloudDatabase {
+    return [[AGMockCKDatabase alloc] init];
+}
+
+@end
+
+// -----------------------------------------------------------------------------
+// 2. App Group Sandbox Fallback
 // -----------------------------------------------------------------------------
 
 @interface NSFileManager (AGAppGroupFix)
@@ -40,8 +98,6 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 - (NSURL *)ag_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
     NSURL *url = [self ag_containerURLForSecurityApplicationGroupIdentifier:groupIdentifier];
     if (!url) {
-        // Если App Group недоступен (бесплатный Apple ID или стоит официальная телега),
-        // перенаправляем базу данных в личную папку Documents приложения!
         url = [[self URLsForDirectory:NSDocumentDirectory inDomains:NSUserDomainMask] firstObject];
         NSLog(@"[AlanyGram] Redirected App Group '%@' to private sandbox: %@", groupIdentifier, url);
     }
@@ -51,7 +107,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 2. Ghost Mode & Anti-Delete Hooks
+// 3. Ghost Mode & Anti-Delete Hooks
 // -----------------------------------------------------------------------------
 
 @interface AGEngineHookTarget : NSObject
@@ -89,7 +145,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 3. Secret Media Viewer (Одноразовые фото, видео, аудио)
+// 4. Secret Media Viewer (Одноразовые фото, видео, аудио)
 // -----------------------------------------------------------------------------
 
 @interface AGSecretMediaHookTarget : NSObject
@@ -124,11 +180,11 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
     return orig ? orig(self, sel) : YES;
 }
 
-- (BOOL)ag_canPerformSaveAction {
+- (BOOL)canPerformSaveAction {
     if ([AlanyGramSettings shared].antiViewOnceEnabled) {
         return YES;
     }
-    SEL sel = @selector(ag_canPerformSaveAction);
+    SEL sel = @selector(canPerformSaveAction);
     BOOL (*orig)(id, SEL) = (BOOL (*)(id, SEL))[self methodForSelector:sel];
     return orig ? orig(self, sel) : YES;
 }
@@ -145,7 +201,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 4. Плавающая кнопка настроек AlanyGram
+// 5. Плавающая кнопка настроек AlanyGram
 // -----------------------------------------------------------------------------
 
 @interface AGFloatingButtonManager : NSObject
@@ -245,15 +301,25 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 
 __attribute__((constructor))
 static void AlanyGramInitialize(void) {
-    NSLog(@"[AlanyGram] Initializing AlanyGram with App Group Fallback...");
+    NSLog(@"[AlanyGram] Initializing AlanyGram with CloudKit Bypass & App Group Fallback...");
     
-    // 1. Фикс черного экрана: перенаправление App Group в личный Documents, если группы недоступны
+    // 1. Фикс CloudKit краша: глушим вызовы [CKContainer defaultContainer], чтобы не падать на SIGTRAP
+    Class ckClass = objc_getClass("CKContainer");
+    if (ckClass) {
+        Class mockClass = [AGMockCKContainer class];
+        Class metaClass = object_getClass((id)ckClass);
+        Class mockMetaClass = object_getClass((id)mockClass);
+        AGSwizzleInstanceMethod(metaClass, @selector(defaultContainer), mockMetaClass, @selector(ag_defaultContainer));
+        AGSwizzleInstanceMethod(metaClass, @selector(containerWithIdentifier:), mockMetaClass, @selector(ag_containerWithIdentifier:));
+    }
+    
+    // 2. Фикс App Group: перенаправление в личный Documents приложения
     AGSwizzleInstanceMethod([NSFileManager class], 
                             @selector(containerURLForSecurityApplicationGroupIdentifier:), 
                             [NSFileManager class], 
                             @selector(ag_containerURLForSecurityApplicationGroupIdentifier:));
     
-    // 2. Engine Hooks
+    // 3. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
     if (engineClass) {
         Class engineTarget = [AGEngineHookTarget class];
@@ -267,18 +333,17 @@ static void AlanyGramInitialize(void) {
         AGSwizzleInstanceMethod(storyClass, @selector(markStoryRead:), engineTarget, @selector(ag_markStoryRead:));
     }
     
-    // 3. Secret Media Viewer Hooks
+    // 4. Secret Media Viewer Hooks
     Class viewerClass = objc_getClass("TGSecretMediaViewer");
     if (viewerClass) {
         Class mediaTarget = [AGSecretMediaHookTarget class];
         AGSwizzleInstanceMethod(viewerClass, @selector(startTtlCountdown:), mediaTarget, @selector(ag_startTtlCountdown:));
         AGSwizzleInstanceMethod(viewerClass, @selector(isExpired), mediaTarget, @selector(ag_isExpired));
         AGSwizzleInstanceMethod(viewerClass, @selector(allowSavingPhotos), mediaTarget, @selector(ag_allowSavingPhotos));
-        AGSwizzleInstanceMethod(viewerClass, @selector(canPerformSaveAction), mediaTarget, @selector(ag_canPerformSaveAction));
         AGSwizzleInstanceMethod(viewerClass, @selector(notifyServerMediaOpened:), mediaTarget, @selector(ag_notifyServerMediaOpened:));
     }
     
-    // 4. Плавающая кнопка настроек после запуска приложения
+    // 5. Плавающая кнопка настроек после запуска приложения
     [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
                                                       object:nil
                                                        queue:[NSOperationQueue mainQueue]
