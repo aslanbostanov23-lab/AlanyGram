@@ -33,18 +33,19 @@ jobs:
           ls -la .theos/obj/debug/ || ls -la packages/
 
       - name: Download Telegram IPA
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [ -n "${{ github.event.inputs.telegram_ipa_url }}" ]; then
             echo "Скачивание IPA по указанной ссылке..."
-            curl -Lo Telegram.ipa "${{ github.event.inputs.telegram_ipa_url }}"
+            curl -fLo Telegram.ipa "${{ github.event.inputs.telegram_ipa_url }}"
           else
-            echo "Скачивание базового расшифрованного Telegram.ipa..."
-            # Используем открытый релиз чистого Telegram IPA
-            curl -Lo Telegram.ipa "https://github.com/purp0s3/Tweaked-iOS-Apps/releases/download/Telegram/Telegram.ipa" || \
-            curl -Lo Telegram.ipa "https://ipa.cydiaios.com/download/Telegram.ipa"
+            echo "Скачивание проверенного расшифрованного Telegram.ipa..."
+            gh release download 9.0.24102 -R MarshalX/decrypted-telegram-ios -p "*.ipa" -O Telegram.ipa || \
+            curl -fLo Telegram.ipa "https://github.com/purp0s3/Tweaked-iOS-Apps/releases/download/Telegram/Telegram.ipa"
           fi
 
-      - name: Install Azule / optool for Injection
+      - name: Install optool & ldid for Injection
         run: |
           brew install ldid
           curl -Lo optool https://github.com/alexzielenski/optool/releases/download/0.1/optool.osx.zip
@@ -61,22 +62,25 @@ jobs:
           APP_PATH=$(find work/Payload -maxdepth 1 -name "*.app")
           echo "Found app at $APP_PATH"
           
-          # Копируем скомпилированный AlanyGram.dylib
-          DYLIB_PATH=$(find .theos -name "AlanyGram.dylib" | head -n 1)
+          # Находим скомпилированный AlanyGram.dylib
+          DYLIB_PATH=$(find .theos packages -name "AlanyGram.dylib" 2>/dev/null | head -n 1)
           if [ -z "$DYLIB_PATH" ]; then
-            echo "Поиск в packages..."
+            echo "Извлечение dylib из .deb..."
+            mkdir -p extracted
             dpkg-deb -x packages/*.deb extracted/
             DYLIB_PATH=$(find extracted -name "AlanyGram.dylib" | head -n 1)
           fi
           
-          echo "Copying $DYLIB_PATH to $APP_PATH/AlanyGram.dylib"
+          echo "Found dylib at: $DYLIB_PATH"
+          cp "$DYLIB_PATH" ./AlanyGram.dylib
           cp "$DYLIB_PATH" "$APP_PATH/AlanyGram.dylib"
           
-          # Подписываем dylib фальшивым сертификатом (ad-hoc ldid)
+          # Подписываем dylib (ad-hoc ldid)
           ldid -S "$APP_PATH/AlanyGram.dylib"
           
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
+          echo "Executable name: $BINARY_NAME"
           optool install -c load -p "@executable_path/AlanyGram.dylib" -t "$APP_PATH/$BINARY_NAME"
           
           # Переупаковываем IPA
@@ -90,4 +94,13 @@ jobs:
         with:
           name: AlanyGram-IPA
           path: AlanyGram.ipa
+          retention-days: 14
+
+      - name: Upload Tweak Dylib & Deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlanyGram-Tweak-Files
+          path: |
+            AlanyGram.dylib
+            packages/*.deb
           retention-days: 14
