@@ -1,0 +1,93 @@
+name: Build AlanyGram IPA
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      telegram_ipa_url:
+        description: 'Прямая ссылка на расшифрованный Telegram.ipa (оставьте пустым для авто-загрузки)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Theos
+        run: |
+          git clone --recursive https://github.com/theos/theos.git ~/theos
+          echo "THEOS=~/theos" >> $GITHUB_ENV
+          curl -LO https://github.com/theos/sdks/archive/master.zip
+          unzip master.zip -d ~/theos/sdks
+          mv ~/theos/sdks/sdks-master/* ~/theos/sdks/
+          rm -rf master.zip ~/theos/sdks/sdks-master
+
+      - name: Compile AlanyGram Tweak
+        run: |
+          make clean
+          make package FINALPACKAGE=1
+          ls -la .theos/obj/debug/ || ls -la packages/
+
+      - name: Download Telegram IPA
+        run: |
+          if [ -n "${{ github.event.inputs.telegram_ipa_url }}" ]; then
+            echo "Скачивание IPA по указанной ссылке..."
+            curl -Lo Telegram.ipa "${{ github.event.inputs.telegram_ipa_url }}"
+          else
+            echo "Скачивание базового расшифрованного Telegram.ipa..."
+            # Используем открытый релиз чистого Telegram IPA
+            curl -Lo Telegram.ipa "https://github.com/purp0s3/Tweaked-iOS-Apps/releases/download/Telegram/Telegram.ipa" || \
+            curl -Lo Telegram.ipa "https://ipa.cydiaios.com/download/Telegram.ipa"
+          fi
+
+      - name: Install Azule / optool for Injection
+        run: |
+          brew install ldid
+          curl -Lo optool https://github.com/alexzielenski/optool/releases/download/0.1/optool.osx.zip
+          unzip optool.osx.zip
+          chmod +x optool
+          sudo mv optool /usr/local/bin/
+
+      - name: Inject Tweak into IPA
+        run: |
+          mkdir -p work
+          unzip -q Telegram.ipa -d work/
+          
+          # Находим .app
+          APP_PATH=$(find work/Payload -maxdepth 1 -name "*.app")
+          echo "Found app at $APP_PATH"
+          
+          # Копируем скомпилированный AlanyGram.dylib
+          DYLIB_PATH=$(find .theos -name "AlanyGram.dylib" | head -n 1)
+          if [ -z "$DYLIB_PATH" ]; then
+            echo "Поиск в packages..."
+            dpkg-deb -x packages/*.deb extracted/
+            DYLIB_PATH=$(find extracted -name "AlanyGram.dylib" | head -n 1)
+          fi
+          
+          echo "Copying $DYLIB_PATH to $APP_PATH/AlanyGram.dylib"
+          cp "$DYLIB_PATH" "$APP_PATH/AlanyGram.dylib"
+          
+          # Подписываем dylib фальшивым сертификатом (ad-hoc ldid)
+          ldid -S "$APP_PATH/AlanyGram.dylib"
+          
+          # Внедряем вызов dylib в бинарник Telegram
+          BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
+          optool install -c load -p "@executable_path/AlanyGram.dylib" -t "$APP_PATH/$BINARY_NAME"
+          
+          # Переупаковываем IPA
+          cd work
+          zip -q -r ../AlanyGram.ipa Payload
+          cd ..
+          echo "Готово! AlanyGram.ipa создан."
+
+      - name: Upload Ready AlanyGram IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: AlanyGram-IPA
+          path: AlanyGram.ipa
+          retention-days: 14
