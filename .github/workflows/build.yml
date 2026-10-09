@@ -80,6 +80,9 @@ jobs:
           # Подписываем dylib (ad-hoc ldid)
           ldid -S "$APP_PATH/AlanyGram.dylib"
           
+          # Удаляем ограничение UISupportedDevices для совместимости со всеми iPhone (App Thinning fix)
+          /usr/libexec/PlistBuddy -c "Delete :UISupportedDevices" "$APP_PATH/Info.plist" || true
+
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
           echo "Executable name: $BINARY_NAME"
