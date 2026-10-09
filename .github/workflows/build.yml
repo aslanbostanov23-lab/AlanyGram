@@ -26,13 +26,15 @@ jobs:
           mv ~/theos/sdks/sdks-master/* ~/theos/sdks/
           rm -rf master.zip ~/theos/sdks/sdks-master
 
-      - name: Install Build Tools (ldid & optool)
+      - name: Install Build Tools (ldid & insert_dylib)
         run: |
           brew install ldid
-          curl -Lo optool https://github.com/alexzielenski/optool/releases/download/0.1/optool.osx.zip
-          unzip -q optool.osx.zip
-          chmod +x optool
-          sudo mv optool /usr/local/bin/
+          git clone --depth 1 https://github.com/tyilo/insert_dylib.git
+          cd insert_dylib
+          xcodebuild -project insert_dylib.xcodeproj -configuration Release
+          sudo cp build/Release/insert_dylib /usr/local/bin/
+          cd ..
+          rm -rf insert_dylib
 
       - name: Compile AlanyGram Tweak
         run: |
@@ -81,7 +83,7 @@ jobs:
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
           echo "Executable name: $BINARY_NAME"
-          optool install -c load -p "@executable_path/AlanyGram.dylib" -t "$APP_PATH/$BINARY_NAME"
+          insert_dylib "@executable_path/AlanyGram.dylib" "$APP_PATH/$BINARY_NAME" --all-yes --inplace
           
           # Переупаковываем IPA
           cd work
