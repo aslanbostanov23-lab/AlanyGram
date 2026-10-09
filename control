@@ -1,6 +1,5 @@
 Package: ru.aslan.alanygram
 Name: AlanyGram
-Depends: mobilesubstrate
 Version: 1.0.0
 Architecture: iphoneos-arm
 Description: Custom Telegram modification with Ghost mode, Anti-View-Once, and Anti-Delete features. Created by Aslan.
