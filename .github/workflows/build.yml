@@ -26,11 +26,19 @@ jobs:
           mv ~/theos/sdks/sdks-master/* ~/theos/sdks/
           rm -rf master.zip ~/theos/sdks/sdks-master
 
+      - name: Install Build Tools (ldid & optool)
+        run: |
+          brew install ldid
+          curl -Lo optool https://github.com/alexzielenski/optool/releases/download/0.1/optool.osx.zip
+          unzip -q optool.osx.zip
+          chmod +x optool
+          sudo mv optool /usr/local/bin/
+
       - name: Compile AlanyGram Tweak
         run: |
           make clean
           make package FINALPACKAGE=1
-          ls -la .theos/obj/debug/ || ls -la packages/
+          ls -la .theos/obj/ || ls -la packages/
 
       - name: Download Telegram IPA
         env:
@@ -44,14 +52,6 @@ jobs:
             gh release download 9.0.24102 -R MarshalX/decrypted-telegram-ios -p "*.ipa" -O Telegram.ipa || \
             curl -fLo Telegram.ipa "https://github.com/purp0s3/Tweaked-iOS-Apps/releases/download/Telegram/Telegram.ipa"
           fi
-
-      - name: Install optool & ldid for Injection
-        run: |
-          brew install ldid
-          curl -Lo optool https://github.com/alexzielenski/optool/releases/download/0.1/optool.osx.zip
-          unzip optool.osx.zip
-          chmod +x optool
-          sudo mv optool /usr/local/bin/
 
       - name: Inject Tweak into IPA
         run: |
