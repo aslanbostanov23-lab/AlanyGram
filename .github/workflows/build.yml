@@ -83,6 +83,9 @@ jobs:
           # Удаляем ограничение UISupportedDevices для совместимости со всеми iPhone (App Thinning fix)
           /usr/libexec/PlistBuddy -c "Delete :UISupportedDevices" "$APP_PATH/Info.plist" || true
 
+          # Удаляем PlugIns и Watch, которые вызывают черный экран при бесплатном Apple ID (Sideloading fix)
+          rm -rf "$APP_PATH/PlugIns" "$APP_PATH/Watch"
+
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
           echo "Executable name: $BINARY_NAME"
