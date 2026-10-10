@@ -351,16 +351,102 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 5. Плавающая кнопка настроек AlanyGram
+// 5. Плавающая кнопка и окно настроек AlanyGram
 // -----------------------------------------------------------------------------
+
+@interface AGFloatingButton : UIButton
+@end
+
+@implementation AGFloatingButton {
+    CGPoint _beginPoint;
+    BOOL _isDragging;
+}
+
+- (instancetype)initWithFrame:(CGRect)frame {
+    self = [super initWithFrame:frame];
+    if (self) {
+        self.layer.cornerRadius = frame.size.width / 2.0;
+        self.clipsToBounds = NO;
+        self.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.95];
+        [self setTitle:@"AG" forState:UIControlStateNormal];
+        self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+        [self setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+        
+        self.layer.shadowColor = [UIColor blackColor].CGColor;
+        self.layer.shadowOffset = CGSizeMake(0, 3);
+        self.layer.shadowOpacity = 0.35;
+        self.layer.shadowRadius = 5;
+        self.layer.borderWidth = 1.5;
+        self.layer.borderColor = [UIColor colorWithWhite:1.0 alpha:0.4].CGColor;
+    }
+    return self;
+}
+
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesBegan:touches withEvent:event];
+    UITouch *t = [touches anyObject];
+    _beginPoint = [t locationInView:self.superview];
+    _isDragging = NO;
+    [UIView animateWithDuration:0.1 animations:^{
+        self.transform = CGAffineTransformMakeScale(0.90, 0.90);
+        self.alpha = 0.85;
+    }];
+    UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleLight];
+    [feedback impactOccurred];
+}
+
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesMoved:touches withEvent:event];
+    UITouch *t = [touches anyObject];
+    CGPoint currentPoint = [t locationInView:self.superview];
+    CGFloat dx = currentPoint.x - _beginPoint.x;
+    CGFloat dy = currentPoint.y - _beginPoint.y;
+    if (hypot(dx, dy) > 6.0) {
+        _isDragging = YES;
+        self.center = CGPointMake(self.center.x + dx, self.center.y + dy);
+        _beginPoint = currentPoint;
+    }
+}
+
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesEnded:touches withEvent:event];
+    [UIView animateWithDuration:0.1 animations:^{
+        self.transform = CGAffineTransformIdentity;
+        self.alpha = 1.0;
+    }];
+    if (!_isDragging) {
+        UIImpactFeedbackGenerator *feedback = [[UIImpactFeedbackGenerator alloc] initWithStyle:UIImpactFeedbackStyleMedium];
+        [feedback impactOccurred];
+        [[objc_getClass("AGFloatingButtonManager") performSelector:@selector(shared)] performSelector:@selector(openSettings)];
+    } else {
+        CGRect bounds = self.superview ? self.superview.bounds : [UIScreen mainScreen].bounds;
+        CGFloat targetX = (self.center.x > bounds.size.width / 2.0) ? (bounds.size.width - self.bounds.size.width / 2.0 - 15) : (self.bounds.size.width / 2.0 + 15);
+        CGFloat targetY = MIN(MAX(self.center.y, 80), bounds.size.height - 100);
+        [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.7 initialSpringVelocity:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            self.center = CGPointMake(targetX, targetY);
+        } completion:nil];
+    }
+}
+
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [super touchesCancelled:touches withEvent:event];
+    [UIView animateWithDuration:0.1 animations:^{
+        self.transform = CGAffineTransformIdentity;
+        self.alpha = 1.0;
+    }];
+}
+
+@end
 
 @interface AGFloatingButtonManager : NSObject
 + (instancetype)shared;
 - (void)setupFloatingButton;
+- (void)openSettings;
 @end
 
 @implementation AGFloatingButtonManager {
-    UIButton *_floatingButton;
+    AGFloatingButton *_floatingButton;
+    UIWindow *_settingsWindow;
 }
 
 + (instancetype)shared {
@@ -372,75 +458,124 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
     return instance;
 }
 
-- (void)setupFloatingButton {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-        UIWindow *window = nil;
-        for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
-            if ([scene isKindOfClass:[UIWindowScene class]]) {
-                for (UIWindow *w in scene.windows) {
-                    if (w.isKeyWindow) {
-                        window = w;
-                        break;
-                    }
+- (UIWindow *)findActiveKeyWindow {
+    for (UIWindowScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]] && scene.activationState == UISceneActivationStateForegroundActive) {
+            for (UIWindow *w in scene.windows) {
+                if (w.isKeyWindow || [NSStringFromClass([w class]) containsString:@"Main"]) {
+                    return w;
                 }
             }
+            if (scene.windows.count > 0) {
+                return scene.windows.firstObject;
+            }
         }
-        if (!window) window = [UIApplication sharedApplication].windows.firstObject;
-        if (!window || self->_floatingButton) return;
+    }
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if (w.isKeyWindow) return w;
+    }
+    return [UIApplication sharedApplication].windows.firstObject;
+}
 
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeCustom];
-        btn.frame = CGRectMake(window.bounds.size.width - 65, window.bounds.size.height - 150, 48, 48);
-        btn.layer.cornerRadius = 24;
-        btn.backgroundColor = [UIColor colorWithRed:0.0 green:0.48 blue:1.0 alpha:0.9];
-        [btn setTitle:@"AG" forState:UIControlStateNormal];
-        btn.titleLabel.font = [UIFont boldSystemFontOfSize:16];
-        [btn setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
-        
-        btn.layer.shadowColor = [UIColor blackColor].CGColor;
-        btn.layer.shadowOffset = CGSizeMake(0, 3);
-        btn.layer.shadowOpacity = 0.3;
-        btn.layer.shadowRadius = 4;
-        
-        UIPanGestureRecognizer *pan = [[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handlePan:)];
-        [btn addGestureRecognizer:pan];
-        
-        [btn addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
-        
-        [window addSubview:btn];
-        self->_floatingButton = btn;
+- (void)setupFloatingButton {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *window = [self findActiveKeyWindow];
+        if (!window) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [self setupFloatingButton];
+            });
+            return;
+        }
+
+        if (!self->_floatingButton) {
+            self->_floatingButton = [[AGFloatingButton alloc] initWithFrame:CGRectMake(window.bounds.size.width - 65, window.bounds.size.height - 150, 50, 50)];
+        }
+
+        if (self->_floatingButton.superview != window) {
+            [window addSubview:self->_floatingButton];
+        }
+        [window bringSubviewToFront:self->_floatingButton];
     });
 }
 
-- (void)handlePan:(UIPanGestureRecognizer *)pan {
-    UIView *btn = pan.view;
-    CGPoint translation = [pan translationInView:btn.superview];
-    btn.center = CGPointMake(btn.center.x + translation.x, btn.center.y + translation.y);
-    [pan setTranslation:CGPointZero inView:btn.superview];
-}
-
 - (void)openSettings {
-    UIViewController *topVC = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    while (topVC.presentedViewController) {
-        topVC = topVC.presentedViewController;
-    }
-    
-    AlanyGramSettingsViewController *vc = [[AlanyGramSettingsViewController alloc] init];
-    UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
-    
-    UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone 
-                                                                              target:self 
-                                                                              action:@selector(dismissSettings:)];
-    vc.navigationItem.rightBarButtonItem = closeBtn;
-    
-    [topVC presentViewController:nav animated:YES completion:nil];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        if (self->_settingsWindow) return;
+
+        UIWindowScene *activeScene = nil;
+        for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+            if ([s isKindOfClass:[UIWindowScene class]] && s.activationState == UISceneActivationStateForegroundActive) {
+                activeScene = (UIWindowScene *)s;
+                break;
+            }
+        }
+        if (!activeScene) {
+            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
+                if ([s isKindOfClass:[UIWindowScene class]]) {
+                    activeScene = (UIWindowScene *)s;
+                    break;
+                }
+            }
+        }
+
+        UIWindow *win = nil;
+        if (activeScene) {
+            win = [[UIWindow alloc] initWithWindowScene:activeScene];
+        } else {
+            win = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        }
+        win.windowLevel = UIWindowLevelAlert + 100;
+
+        AlanyGramSettingsViewController *vc = [[AlanyGramSettingsViewController alloc] init];
+        UINavigationController *nav = [[UINavigationController alloc] initWithRootViewController:vc];
+
+        UIBarButtonItem *closeBtn = [[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemDone 
+                                                                                  target:self 
+                                                                                  action:@selector(dismissSettings:)];
+        vc.navigationItem.rightBarButtonItem = closeBtn;
+
+        win.rootViewController = nav;
+        self->_settingsWindow = win;
+        [win makeKeyAndVisible];
+
+        win.alpha = 0.0;
+        win.transform = CGAffineTransformMakeScale(0.92, 0.92);
+        [UIView animateWithDuration:0.25 delay:0 usingSpringWithDamping:0.85 initialSpringVelocity:0 options:UIViewAnimationOptionCurveEaseOut animations:^{
+            win.alpha = 1.0;
+            win.transform = CGAffineTransformIdentity;
+        } completion:nil];
+    });
 }
 
-- (void)dismissSettings:(UIBarButtonItem *)sender {
-    UIViewController *topVC = [UIApplication sharedApplication].windows.firstObject.rootViewController;
-    while (topVC.presentedViewController) {
-        topVC = topVC.presentedViewController;
+- (void)dismissSettings:(id)sender {
+    if (!self->_settingsWindow) return;
+    [UIView animateWithDuration:0.2 animations:^{
+        self->_settingsWindow.alpha = 0.0;
+        self->_settingsWindow.transform = CGAffineTransformMakeScale(0.92, 0.92);
+    } completion:^(BOOL finished) {
+        self->_settingsWindow.hidden = YES;
+        self->_settingsWindow.rootViewController = nil;
+        self->_settingsWindow = nil;
+
+        UIWindow *activeWin = [self findActiveKeyWindow];
+        [activeWin makeKeyWindow];
+    }];
+}
+
+@end
+
+@interface UIWindow (AGShakeHook)
+@end
+
+@implementation UIWindow (AGShakeHook)
+
+- (void)ag_motionEnded:(UIEventSubtype)motion withEvent:(UIEvent *)event {
+    if (motion == UIEventSubtypeMotionShake) {
+        [[AGFloatingButtonManager shared] openSettings];
     }
-    [topVC dismissViewControllerAnimated:YES completion:nil];
+    SEL sel = @selector(ag_motionEnded:withEvent:);
+    void (*orig)(id, SEL, UIEventSubtype, UIEvent *) = (void (*)(id, SEL, UIEventSubtype, UIEvent *))[self methodForSelector:sel];
+    if (orig) orig(self, sel, motion, event);
 }
 
 @end
@@ -525,11 +660,37 @@ static void AlanyGramInitialize(void) {
         AGSwizzleInstanceMethod(viewerClass, @selector(notifyServerMediaOpened:), mediaTarget, @selector(ag_notifyServerMediaOpened:));
     }
     
-    // 5. Плавающая кнопка настроек после запуска приложения
-    [[NSNotificationCenter defaultCenter] addObserverForName:UIApplicationDidFinishLaunchingNotification
-                                                      object:nil
-                                                       queue:[NSOperationQueue mainQueue]
-                                                  usingBlock:^(NSNotification * _Nonnull note) {
+    // 5. Встряхивание устройства (Shake to Open Settings)
+    AGSwizzleInstanceMethod([UIWindow class], 
+                            @selector(motionEnded:withEvent:), 
+                            [UIWindow class], 
+                            @selector(ag_motionEnded:withEvent:));
+
+    // 6. Плавающая кнопка настроек после запуска приложения и активации сцены
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc addObserverForName:UIApplicationDidFinishLaunchingNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification * _Nonnull note) {
         [[AGFloatingButtonManager shared] setupFloatingButton];
     }];
+
+    [nc addObserverForName:UIApplicationDidBecomeActiveNotification
+                    object:nil
+                     queue:[NSOperationQueue mainQueue]
+                usingBlock:^(NSNotification * _Nonnull note) {
+        [[AGFloatingButtonManager shared] setupFloatingButton];
+    }];
+
+    if (@available(iOS 13.0, *)) {
+        [nc addObserverForName:UISceneDidActivateNotification
+                        object:nil
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification * _Nonnull note) {
+            [[AGFloatingButtonManager shared] setupFloatingButton];
+        }];
+    }
+
+    // Запускаем немедленно (если конструктор выполнился уже после запуска окна)
+    [[AGFloatingButtonManager shared] setupFloatingButton];
 }
