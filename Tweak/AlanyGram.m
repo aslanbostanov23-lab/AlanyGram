@@ -136,7 +136,104 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 2. App Group Sandbox Fallback
+// 2. Siri & Intents Mock (Предотвращает SIGABRT на бесплатном Apple ID)
+// -----------------------------------------------------------------------------
+
+@interface AGMockINPreferences : NSObject
+@end
+
+@implementation AGMockINPreferences
+
++ (NSInteger)ag_siriAuthorizationStatus {
+    // 2 = INSiriAuthorizationStatusDenied (сообщаем, что Siri отключена)
+    return 2;
+}
+
++ (void)ag_requestSiriAuthorization:(void (^)(NSInteger))handler {
+    if (handler) {
+        handler(2);
+    }
+}
+
+@end
+
+@interface AGMockINInteraction : NSObject
+@end
+
+@implementation AGMockINInteraction
+
+- (void)ag_donateInteractionWithCompletion:(void (^)(NSError *))completion {
+    if (completion) {
+        completion(nil);
+    }
+}
+
+- (void)ag_deleteAllInteractionsWithCompletion:(void (^)(NSError *))completion {
+    if (completion) {
+        completion(nil);
+    }
+}
+
+- (void)ag_deleteInteractionsWithIdentifiers:(NSArray *)identifiers completion:(void (^)(NSError *))completion {
+    if (completion) {
+        completion(nil);
+    }
+}
+
+@end
+
+@interface AGMockINVoiceShortcutCenter : NSObject
+@end
+
+@implementation AGMockINVoiceShortcutCenter
+
++ (id)ag_sharedCenter {
+    static AGMockINVoiceShortcutCenter *center = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        center = [[AGMockINVoiceShortcutCenter alloc] init];
+    });
+    return center;
+}
+
+- (void)getAllVoiceShortcutsWithCompletion:(void (^)(NSArray *, NSError *))completion {
+    if (completion) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(@[], nil);
+        });
+    }
+}
+
+- (void)getVoiceShortcutWithIdentifier:(id)identifier completion:(void (^)(id, NSError *))completion {
+    if (completion) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            completion(nil, nil);
+        });
+    }
+}
+
+- (void)setShortcutSuggestions:(NSArray *)suggestions {
+}
+
+- (id)forwardingTargetForSelector:(SEL)aSelector {
+    return nil;
+}
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector {
+    NSMethodSignature *sig = [super methodSignatureForSelector:aSelector];
+    if (!sig) {
+        sig = [NSMethodSignature signatureWithObjCTypes:"v@:@"];
+    }
+    return sig;
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation {
+}
+
+@end
+
+// -----------------------------------------------------------------------------
+// 3. App Group Sandbox Fallback
 // -----------------------------------------------------------------------------
 
 @interface NSFileManager (AGAppGroupFix)
@@ -368,7 +465,33 @@ static void AlanyGramInitialize(void) {
         AGSwizzleInstanceMethod(ckDbClass, @selector(fetchRecordWithID:completionHandler:), mockDbClass, @selector(fetchRecordWithID:completionHandler:));
     }
     
-    // 2. Фикс App Group: перенаправление в личный Documents приложения
+    // 2. Фикс Siri / Intents краша: глушим запросы к Siri, так как на бесплатном Apple ID нет прав com.apple.developer.siri
+    Class inPrefsClass = objc_getClass("INPreferences");
+    if (inPrefsClass) {
+        Class mockClass = [AGMockINPreferences class];
+        Class metaClass = object_getClass((id)inPrefsClass);
+        Class mockMetaClass = object_getClass((id)mockClass);
+        AGSwizzleInstanceMethod(metaClass, @selector(siriAuthorizationStatus), mockMetaClass, @selector(ag_siriAuthorizationStatus));
+        AGSwizzleInstanceMethod(metaClass, @selector(requestSiriAuthorization:), mockMetaClass, @selector(ag_requestSiriAuthorization:));
+    }
+    
+    Class inInteractionClass = objc_getClass("INInteraction");
+    if (inInteractionClass) {
+        Class mockClass = [AGMockINInteraction class];
+        AGSwizzleInstanceMethod(inInteractionClass, @selector(donateInteractionWithCompletion:), mockClass, @selector(ag_donateInteractionWithCompletion:));
+        AGSwizzleInstanceMethod(inInteractionClass, @selector(deleteAllInteractionsWithCompletion:), mockClass, @selector(ag_deleteAllInteractionsWithCompletion:));
+        AGSwizzleInstanceMethod(inInteractionClass, @selector(deleteInteractionsWithIdentifiers:completion:), mockClass, @selector(ag_deleteInteractionsWithIdentifiers:completion:));
+    }
+    
+    Class inVoiceClass = objc_getClass("INVoiceShortcutCenter");
+    if (inVoiceClass) {
+        Class mockClass = [AGMockINVoiceShortcutCenter class];
+        Class metaClass = object_getClass((id)inVoiceClass);
+        Class mockMetaClass = object_getClass((id)mockClass);
+        AGSwizzleInstanceMethod(metaClass, @selector(sharedCenter), mockMetaClass, @selector(ag_sharedCenter));
+    }
+
+    // 3. Фикс App Group: перенаправление в личный Documents приложения
     AGSwizzleInstanceMethod([NSFileManager class], 
                             @selector(containerURLForSecurityApplicationGroupIdentifier:), 
                             [NSFileManager class], 
