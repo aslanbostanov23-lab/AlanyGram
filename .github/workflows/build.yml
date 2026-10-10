@@ -89,6 +89,8 @@ jobs:
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ru.aslan.alanygram" "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName AlanyGram" "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleName AlanyGram" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 12.2.4" "$APP_PATH/Info.plist" || true
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 35000" "$APP_PATH/Info.plist" || true
 
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")

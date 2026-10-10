@@ -272,6 +272,18 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
     return [self ag_bundleIdentifier];
 }
 
+- (id)ag_objectForInfoDictionaryKey:(NSString *)key {
+    if (self == [NSBundle mainBundle]) {
+        if ([key isEqualToString:@"CFBundleShortVersionString"]) {
+            return @"12.2.4";
+        }
+        if ([key isEqualToString:@"CFBundleVersion"]) {
+            return @"35000";
+        }
+    }
+    return [self ag_objectForInfoDictionaryKey:key];
+}
+
 @end
 
 // -----------------------------------------------------------------------------
@@ -519,11 +531,15 @@ static void AlanyGramInitialize(void) {
                             [NSFileManager class], 
                             @selector(ag_containerURLForSecurityApplicationGroupIdentifier:));
     
-    // 4. Спуфим Bundle Identifier для сервера Telegram (чтобы сервер распознавал официальный клиент и слал код)
+    // 4. Спуфим Bundle Identifier и версию 12.2.4 (чтобы убрать окно "Telegram Update" и разрешить вход)
     AGSwizzleInstanceMethod([NSBundle class], 
                             @selector(bundleIdentifier), 
                             [NSBundle class], 
                             @selector(ag_bundleIdentifier));
+    AGSwizzleInstanceMethod([NSBundle class], 
+                            @selector(objectForInfoDictionaryKey:), 
+                            [NSBundle class], 
+                            @selector(ag_objectForInfoDictionaryKey:));
     
     // 5. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
