@@ -22,6 +22,32 @@ static void AGSwizzle(Class cls, SEL origSel, Class customCls, SEL newSel) {
     }
 }
 
+// -----------------------------------------------------------------------------
+// 1. Отложенный Bundle ID Spoof — убирает плашку «неофициальный клиент»
+//    Активируется ТОЛЬКО после того, как UIKit привязал окно к сцене,
+//    чтобы не вызвать чёрный экран (как в Run #12–13).
+// -----------------------------------------------------------------------------
+
+static BOOL g_spoofBundleID = NO;
+
+@interface NSBundle (AGDelayedSpoof)
+@end
+
+@implementation NSBundle (AGDelayedSpoof)
+
+- (NSString *)ag_bundleIdentifier {
+    if (self == [NSBundle mainBundle] && g_spoofBundleID) {
+        return @"ph.telegra.Telegraph";
+    }
+    return [self ag_bundleIdentifier]; // вызывает оригинал (swizzled)
+}
+
+@end
+
+// -----------------------------------------------------------------------------
+// 2. Вкладка «Автор» на экране настроек AlanyGram
+// -----------------------------------------------------------------------------
+
 @interface UIViewController (AlanyGramAuthor)
 @end
 
@@ -70,8 +96,32 @@ static void AGSwizzle(Class cls, SEL origSel, Class customCls, SEL newSel) {
 
 @end
 
+// -----------------------------------------------------------------------------
+// Точка входа
+// -----------------------------------------------------------------------------
+
 __attribute__((constructor))
 static void AlanyGramInitialize(void) {
     NSLog(@"[AlanyGram] Initialized AlanyGram v12.9.2 by Aslan (vk.ru/aslanbostanov)");
+    
+    // Хук viewWillAppear для кнопки «Автор»
     AGSwizzle([UIViewController class], @selector(viewWillAppear:), [UIViewController class], @selector(ag_viewWillAppear:));
+    
+    // Хук bundleIdentifier (пока ещё выключен — g_spoofBundleID == NO)
+    AGSwizzle([NSBundle class], @selector(bundleIdentifier), [NSBundle class], @selector(ag_bundleIdentifier));
+    
+    // Включить спуф ПОСЛЕ того как UIKit полностью привяжет окно к сцене.
+    // UISceneDidActivateNotification = сцена уже живая, окно привязано.
+    // Дополнительная задержка 1.5 сек для гарантии.
+    [[NSNotificationCenter defaultCenter] addObserverForName:UISceneDidActivateNotification
+                                                      object:nil
+                                                       queue:[NSOperationQueue mainQueue]
+                                                  usingBlock:^(NSNotification * _Nonnull note) {
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            if (!g_spoofBundleID) {
+                g_spoofBundleID = YES;
+                NSLog(@"[AlanyGram] Bundle ID spoof enabled → ph.telegra.Telegraph");
+            }
+        });
+    }];
 }
