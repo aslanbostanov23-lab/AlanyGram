@@ -29,7 +29,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 }
 
 // -----------------------------------------------------------------------------
-// 1. CloudKit Mock (Предотвращает SIGTRAP / EXC_BREAKPOINT на бесплатном Apple ID)
+// 1. CloudKit Mock (Предотвращает SIGTRAP / EXC_BREAKPOINT и переполнение стека)
 // -----------------------------------------------------------------------------
 
 @interface AGMockCKDatabase : NSObject
@@ -38,14 +38,31 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @implementation AGMockCKDatabase
 
 - (void)fetchRecordWithID:(id)recordID completionHandler:(void (^)(id, NSError *))handler {
-    if (handler) {
-        NSError *error = [NSError errorWithDomain:@"CKErrorDomain" code:1 userInfo:@{NSLocalizedDescriptionKey: @"CloudKit disabled on free Apple ID"}];
-        handler(nil, error);
-    }
+    // ВАЖНО: Не вызываем handler синхронно!
+    // В TelegramCore это приводит к бесконечной рекурсии в SwiftSignalKit retry loop
+    // и падению с переполнением стека (SIGBUS 10 / STACK GUARD).
+    // CloudKit в Telegram нужен только для фонового получения резервных IP адресов DC при блокировках.
+}
+
+- (void)performQuery:(id)query inZoneWithID:(id)zoneID completionHandler:(void (^)(id, NSError *))handler {
+}
+
+- (void)addOperation:(id)operation {
 }
 
 - (id)forwardingTargetForSelector:(SEL)aSelector {
     return nil;
+}
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector {
+    NSMethodSignature *sig = [super methodSignatureForSelector:aSelector];
+    if (!sig) {
+        sig = [NSMethodSignature signatureWithObjCTypes:"v@:@"];
+    }
+    return sig;
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation {
 }
 
 @end
@@ -69,19 +86,51 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 }
 
 - (id)databaseWithDatabaseScope:(NSInteger)scope {
-    return [[AGMockCKDatabase alloc] init];
+    static AGMockCKDatabase *db = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        db = [[AGMockCKDatabase alloc] init];
+    });
+    return db;
 }
 
 - (id)privateCloudDatabase {
-    return [[AGMockCKDatabase alloc] init];
+    return [self databaseWithDatabaseScope:1];
 }
 
 - (id)publicCloudDatabase {
-    return [[AGMockCKDatabase alloc] init];
+    return [self databaseWithDatabaseScope:2];
 }
 
 - (id)sharedCloudDatabase {
-    return [[AGMockCKDatabase alloc] init];
+    return [self databaseWithDatabaseScope:3];
+}
+
+- (void)accountStatusWithCompletionHandler:(void (^)(NSInteger accountStatus, NSError *error))completionHandler {
+    if (completionHandler) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            // 3 = CKAccountStatusNoAccount (сообщаем, что iCloud аккаунт не настроен)
+            completionHandler(3, nil);
+        });
+    }
+}
+
+- (void)addOperation:(id)operation {
+}
+
+- (id)forwardingTargetForSelector:(SEL)aSelector {
+    return nil;
+}
+
+- (NSMethodSignature *)methodSignatureForSelector:(SEL)aSelector {
+    NSMethodSignature *sig = [super methodSignatureForSelector:aSelector];
+    if (!sig) {
+        sig = [NSMethodSignature signatureWithObjCTypes:"v@:@"];
+    }
+    return sig;
+}
+
+- (void)forwardInvocation:(NSInvocation *)anInvocation {
 }
 
 @end
@@ -311,6 +360,12 @@ static void AlanyGramInitialize(void) {
         Class mockMetaClass = object_getClass((id)mockClass);
         AGSwizzleInstanceMethod(metaClass, @selector(defaultContainer), mockMetaClass, @selector(ag_defaultContainer));
         AGSwizzleInstanceMethod(metaClass, @selector(containerWithIdentifier:), mockMetaClass, @selector(ag_containerWithIdentifier:));
+    }
+    
+    Class ckDbClass = objc_getClass("CKDatabase");
+    if (ckDbClass) {
+        Class mockDbClass = [AGMockCKDatabase class];
+        AGSwizzleInstanceMethod(ckDbClass, @selector(fetchRecordWithID:completionHandler:), mockDbClass, @selector(fetchRecordWithID:completionHandler:));
     }
     
     // 2. Фикс App Group: перенаправление в личный Documents приложения
