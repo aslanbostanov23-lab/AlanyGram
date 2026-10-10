@@ -5,7 +5,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = AlanyGram
 
-AlanyGram_FILES = Tweak/AlanyGram.m Tweak/AlanyGramSettings.m
+AlanyGram_FILES = Tweak/AlanyGram.m
 AlanyGram_CFLAGS = -fobjc-arc -Wno-deprecated-declarations
 AlanyGram_FRAMEWORKS = UIKit Foundation
 AlanyGram_LDFLAGS = -undefined dynamic_lookup

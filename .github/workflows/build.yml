@@ -50,11 +50,11 @@ jobs:
             echo "Скачивание IPA по указанной ссылке..."
             curl -fLo Telegram.ipa "${{ github.event.inputs.telegram_ipa_url }}"
           else
-            echo "Скачивание современного чистого Telegram 10.x без DRM..."
-            gh release download build-26837 -R teamgram/teamgram-ios -p "Telegram.ipa" -O Telegram.ipa
+            echo "Скачивание новейшего Telegram 12.9.2..."
+            gh release download v12.9.2-3743 -R sorried/ayu-ios -p "Telegram-12.9.2-3743-sideload.ipa" -O Telegram.ipa
           fi
 
-      - name: Inject Tweak into IPA
+      - name: Inject Tweak and Brand AlanyGram
         run: |
           mkdir -p work
           unzip -q Telegram.ipa -d work/
@@ -79,29 +79,53 @@ jobs:
           # Подписываем dylib (ad-hoc ldid)
           ldid -S "$APP_PATH/AlanyGram.dylib"
           
-          # Удаляем ограничение UISupportedDevices для совместимости со всеми iPhone (App Thinning fix)
+          # Удаляем ограничение UISupportedDevices для совместимости со всеми iPhone
           /usr/libexec/PlistBuddy -c "Delete :UISupportedDevices" "$APP_PATH/Info.plist" || true
 
-          # Удаляем PlugIns и Watch, которые вызывают черный экран при бесплатном Apple ID (Sideloading fix)
+          # Удаляем PlugIns и Watch, если остались
           rm -rf "$APP_PATH/PlugIns" "$APP_PATH/Watch"
 
-          # Устанавливаем независимый Bundle ID и имя AlanyGram, чтобы работать параллельно с официальным Telegram
+          # Устанавливаем независимый Bundle ID и имя AlanyGram
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier ru.aslan.alanygram" "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName AlanyGram" "$APP_PATH/Info.plist" || true
           /usr/libexec/PlistBuddy -c "Set :CFBundleName AlanyGram" "$APP_PATH/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 12.2.4" "$APP_PATH/Info.plist" || true
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion 35000" "$APP_PATH/Info.plist" || true
+
+          # Патчим встроенный раздел настроек Telegram: "Дополнительно" -> "Настройки AlanyGram", "Extras" -> "AlanyGram"
+          python3 -c '
+          import os
+          fw_file = "'"$APP_PATH"'/Frameworks/TelegramUIFramework.framework/TelegramUIFramework"
+          if os.path.exists(fw_file):
+              with open(fw_file, "rb") as f:
+                  data = f.read()
+              
+              old_ru = "Дополнительно".encode("utf-8") + b"\x00\x00\x00\x00\x00\x00"
+              new_ru = "Настройки AlanyGram".encode("utf-8") + b"\x00\x00\x00\x00"
+              if old_ru in data:
+                  data = data.replace(old_ru, new_ru)
+                  print("Patched RU settings tab to: Настройки AlanyGram")
+              
+              old_en = b"Extras\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+              new_en = b"AlanyGram\x00\x00\x00\x00\x00\x00"
+              if old_en in data:
+                  data = data.replace(old_en, new_en)
+                  print("Patched EN settings tab to: AlanyGram")
+              
+              with open(fw_file, "wb") as f:
+                  f.write(data)
+          '
+          ldid -S "$APP_PATH/Frameworks/TelegramUIFramework.framework/TelegramUIFramework" || true
 
           # Внедряем вызов dylib в бинарник Telegram
           BINARY_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Info.plist")
           echo "Executable name: $BINARY_NAME"
           insert_dylib "@executable_path/AlanyGram.dylib" "$APP_PATH/$BINARY_NAME" --all-yes --inplace
+          ldid -S "$APP_PATH/$BINARY_NAME" || true
           
           # Переупаковываем IPA
           cd work
           zip -q -r ../AlanyGram.ipa Payload
           cd ..
-          echo "Готово! AlanyGram.ipa создан."
+          echo "Готово! AlanyGram.ipa (Telegram 12.9.2) создан."
 
       - name: Upload Ready AlanyGram IPA
         uses: actions/upload-artifact@v4
