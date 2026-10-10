@@ -38,10 +38,14 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @implementation AGMockCKDatabase
 
 - (void)fetchRecordWithID:(id)recordID completionHandler:(void (^)(id, NSError *))handler {
-    // ВАЖНО: Не вызываем handler синхронно!
-    // В TelegramCore это приводит к бесконечной рекурсии в SwiftSignalKit retry loop
-    // и падению с переполнением стека (SIGBUS 10 / STACK GUARD).
-    // CloudKit в Telegram нужен только для фонового получения резервных IP адресов DC при блокировках.
+    // Вызываем асинхронно с ошибкой отсутствия аккаунта (CKErrorNotAuthenticated = 9),
+    // чтобы сигнал сети Telegram не зависал в ожидании ответа и не вызывал синхронную рекурсию
+    if (handler) {
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+            NSError *error = [NSError errorWithDomain:@"CKErrorDomain" code:9 userInfo:@{NSLocalizedDescriptionKey: @"iCloud not available"}];
+            handler(nil, error);
+        });
+    }
 }
 
 - (void)performQuery:(id)query inZoneWithID:(id)zoneID completionHandler:(void (^)(id, NSError *))handler {
@@ -253,7 +257,25 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 3. Ghost Mode & Anti-Delete Hooks
+// 4. Bundle Spoofer (Сервер Telegram проверяет ph.telegra.Telegraph для отправки кодов)
+// -----------------------------------------------------------------------------
+
+@interface NSBundle (AGBundleHook)
+@end
+
+@implementation NSBundle (AGBundleHook)
+
+- (NSString *)ag_bundleIdentifier {
+    if (self == [NSBundle mainBundle]) {
+        return @"ph.telegra.Telegraph";
+    }
+    return [self ag_bundleIdentifier];
+}
+
+@end
+
+// -----------------------------------------------------------------------------
+// 5. Ghost Mode & Anti-Delete Hooks
 // -----------------------------------------------------------------------------
 
 @interface AGEngineHookTarget : NSObject
@@ -497,7 +519,13 @@ static void AlanyGramInitialize(void) {
                             [NSFileManager class], 
                             @selector(ag_containerURLForSecurityApplicationGroupIdentifier:));
     
-    // 3. Engine Hooks
+    // 4. Спуфим Bundle Identifier для сервера Telegram (чтобы сервер распознавал официальный клиент и слал код)
+    AGSwizzleInstanceMethod([NSBundle class], 
+                            @selector(bundleIdentifier), 
+                            [NSBundle class], 
+                            @selector(ag_bundleIdentifier));
+    
+    // 5. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
     if (engineClass) {
         Class engineTarget = [AGEngineHookTarget class];
