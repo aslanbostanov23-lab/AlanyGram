@@ -257,37 +257,7 @@ static void AGSwizzleInstanceMethod(Class targetClass, SEL originalSelector, Cla
 @end
 
 // -----------------------------------------------------------------------------
-// 4. Bundle Spoofer (Сервер Telegram проверяет ph.telegra.Telegraph для отправки кодов)
-// -----------------------------------------------------------------------------
-
-@interface NSBundle (AGBundleHook)
-@end
-
-@implementation NSBundle (AGBundleHook)
-
-- (NSString *)ag_bundleIdentifier {
-    if (self == [NSBundle mainBundle]) {
-        return @"ph.telegra.Telegraph";
-    }
-    return [self ag_bundleIdentifier];
-}
-
-- (id)ag_objectForInfoDictionaryKey:(NSString *)key {
-    if (self == [NSBundle mainBundle]) {
-        if ([key isEqualToString:@"CFBundleShortVersionString"]) {
-            return @"12.2.4";
-        }
-        if ([key isEqualToString:@"CFBundleVersion"]) {
-            return @"35000";
-        }
-    }
-    return [self ag_objectForInfoDictionaryKey:key];
-}
-
-@end
-
-// -----------------------------------------------------------------------------
-// 5. Ghost Mode & Anti-Delete Hooks
+// 4. Ghost Mode & Anti-Delete Hooks
 // -----------------------------------------------------------------------------
 
 @interface AGEngineHookTarget : NSObject
@@ -531,17 +501,7 @@ static void AlanyGramInitialize(void) {
                             [NSFileManager class], 
                             @selector(ag_containerURLForSecurityApplicationGroupIdentifier:));
     
-    // 4. Спуфим Bundle Identifier и версию 12.2.4 (чтобы убрать окно "Telegram Update" и разрешить вход)
-    AGSwizzleInstanceMethod([NSBundle class], 
-                            @selector(bundleIdentifier), 
-                            [NSBundle class], 
-                            @selector(ag_bundleIdentifier));
-    AGSwizzleInstanceMethod([NSBundle class], 
-                            @selector(objectForInfoDictionaryKey:), 
-                            [NSBundle class], 
-                            @selector(ag_objectForInfoDictionaryKey:));
-    
-    // 5. Engine Hooks
+    // 4. Engine Hooks
     Class engineClass = objc_getClass("TelegramEngine");
     if (engineClass) {
         Class engineTarget = [AGEngineHookTarget class];
